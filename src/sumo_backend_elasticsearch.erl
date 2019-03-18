@@ -77,7 +77,7 @@ init(Options) ->
     %% All calls are done through http so there no connection pool.
     PoolName = list_to_atom(erlang:ref_to_list(make_ref())),
 
-    Index    = proplists:get_value(index, Options),
+   % Index    = proplists:get_value(index, Options),
     PoolSize = proplists:get_value(poolsize, Options),
     Host     = proplists:get_value(host, Options),
     Port     = proplists:get_value(port, Options),
@@ -88,7 +88,7 @@ init(Options) ->
 
     {ok, _} = tirerl:start_pool(PoolName, PoolOpts),
 
-    {ok, #{index => Index, pool_name => PoolName}}.
+    {ok, #{index => [], pool_name => PoolName}}.
 
 -spec handle_call(term(), term(), state()) -> {reply, term(), state()}.
 handle_call(get_index, _From, State = #{index := Index}) ->
