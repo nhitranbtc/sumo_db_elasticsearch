@@ -139,24 +139,9 @@ delete_all(DocName, #{index := Index, pool_name := PoolName} = State) ->
               non_neg_integer(),
               state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
-find_by(DocName, Conditions, Limit, Offset,
-        #{index := Index, pool_name := PoolName} = State) ->
+find_by(DocName, Conditions, Limit, Offset, State) ->
     lager:debug("find_by/5: DocName: ~p, Conditions: ~p, Limit: ~p, Offset: ~p, State: ~p~n",[DocName, Conditions, Limit, Offset, State]),
-    Type = atom_to_binary(DocName, utf8),
-    Query = build_query(Conditions, Limit, Offset),
-    Params = [
-  %  {<<"content-type">>, <<"application/json">>}
-    ],
-    lager:debug("PoolName: ~p, Index: ~p, Type: ~p, Query: ~p, Params: ~p~n",[PoolName, Index, Type, Query, Params]),
-    SearchResults = tirerl:search(PoolName, Index, Type, Query),
-    lager:debug("search result: ~p~n",[SearchResults]),
-    {ok, #{<<"hits">> := #{<<"hits">> := Results}}} =SearchResults,
-    %    tirerl:search(PoolName, Index, Type, Query),
-
-    Fun = fun(Item) -> wakeup(map_to_doc(DocName, Item)) end,
-    Docs = lists:map(Fun, Results),
-
-    {ok, Docs, State}.
+    find_by(DocName, Conditions,[], Limit, Offset, State).
 
 -spec find_by(sumo:schema_name(),
               sumo:conditions(),
@@ -165,9 +150,21 @@ find_by(DocName, Conditions, Limit, Offset,
               non_neg_integer(),
               state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
-find_by(_DocName, _Conditions, _SortFields, _Limit, _Offset, State) ->
-lager:debug("find_by/6: DocName: ~p, Conditions: ~p, Sort: ~p, Limit: ~p, Offset: ~p, State: ~p~n",[_DocName, _Conditions, _SortFields, _Limit, _Offset, State]),
-    {error, not_supported, State}.
+find_by(DocName, Conditions, SortFields, Limit, Offset, #{index := Index, pool_name := PoolName} = State) ->
+lager:debug("find_by/6: DocName: ~p, Conditions: ~p, Sort: ~p, Limit: ~p, Offset: ~p, State: ~p~n",[DocName, Conditions, SortFields, Limit, Offset, State]),
+    Type = atom_to_binary(DocName, utf8),
+    Query = build_query(Conditions, SortFields, Limit, Offset),
+   
+    lager:debug("PoolName: ~p, Index: ~p, Type: ~p, Query: : ~p~n",[PoolName, Index, Type, Query]),
+    SearchResults = tirerl:search(PoolName, Index, Type, Query),
+    lager:debug("search result: ~p~n",[SearchResults]),
+    {ok, #{<<"hits">> := #{<<"hits">> := Results}}} = SearchResults,
+    %    tirerl:search(PoolName, Index, Type, Query),
+
+    Fun = fun(Item) -> wakeup(map_to_doc(DocName, Item)) end,
+    Docs = lists:map(Fun, Results),
+
+    {ok, Docs, State}.
 
 -spec find_by(sumo:schema_name(), sumo:conditions(), state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
@@ -225,25 +222,92 @@ map_to_doc(DocName, Item) ->
     sumo_internal:set_field(IdField, maps:get(<<"_id">>, Item), Doc).
 
 build_query(Conditions) ->
-    build_query(Conditions, 0, 0).
+    build_query(Conditions, [], 0, 0).
 
-build_query(Conditions, Limit, Offset) ->
-    Query = build_query_conditions(Conditions),
+% build_query(Conditions, Limit, Offset) ->
+%   build_query(Conditions,[], Limit, Offset).
+
+build_query(Conditions, SortConditions, Limit, Offset) ->
+    FilterQuery = build_query_conditions(Conditions),
+    SortQuery = build_sort_conditions(SortConditions),
+    Query = FilterQuery#{
+      sort => SortQuery
+    },
     case Limit of
         0 -> Query;
         _ -> Query#{from => Offset,
                     size => Limit}
     end.
 
+
+build_sort_conditions([]) ->
+    [];
+
+build_sort_conditions(Conditions) when is_list(Conditions) ->
+    lists:map(fun build_sort_conditions/1, Conditions);
+
+build_sort_conditions({SortField, SortValue}) ->
+  #{
+      SortField => SortValue
+  }.      
+
+
 build_query_conditions([]) ->
     #{};
+
 build_query_conditions(Conditions) when is_list(Conditions) ->
     QueryConditions = lists:map(fun build_query_conditions/1, Conditions),
     #{query => #{bool => #{must => QueryConditions}}};
+
 build_query_conditions({Key, Value}) when is_list(Value) ->
     #{match => maps:from_list([{Key, list_to_binary(Value)}])};
+
 build_query_conditions({Key, Value}) ->
     #{match => maps:from_list([{Key, Value}])};
+
+build_query_conditions({Key, Op , Value}) when is_list(Value) ->
+  build_query_conditions({Key, Op , list_to_binary(Value)});
+
+
+build_query_conditions({Key, '>', Value}) ->
+  #{
+    range => #{
+      Key => #{
+        gt => Value
+      }
+    }
+  };
+
+build_query_conditions({Key, '>=', Value}) ->
+  #{
+    range => #{
+      Key => #{
+        gte => Value
+      }
+    }
+  };
+
+build_query_conditions({Key, '<', Value}) ->
+  #{
+    range => #{
+      Key => #{
+        lt => Value
+      }
+    }
+  };
+
+build_query_conditions({Key, '=<', Value}) ->
+  #{
+    range => #{
+      Key => #{
+        lte => Value
+      }
+    }
+  };
+
+build_query_conditions({_Key, 'in', _Values} = Expr) ->
+  throw({unimplemented_expression, Expr});    
+
 build_query_conditions(Expr) ->
     throw({unimplemented_expression, Expr}).
 
