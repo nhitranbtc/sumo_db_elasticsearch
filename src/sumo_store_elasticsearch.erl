@@ -253,13 +253,33 @@ build_query_conditions([]) ->
 
 build_query_conditions(Conditions) when is_list(Conditions) ->
     QueryConditions = lists:map(fun build_query_conditions/1, Conditions),
+      lager:debug("QueryConditions: ~p~n",[QueryConditions]),
     #{query => #{bool => #{must => QueryConditions}}};
 
 build_query_conditions({Key, Value}) when is_list(Value) ->
     #{match => maps:from_list([{Key, list_to_binary(Value)}])};
 
+
 build_query_conditions({Key, Value}) ->
-    #{match => maps:from_list([{Key, Value}])};
+  %lager:debug("build_query_conditions Key: ~p, Value: ~p~n",[Key, Value]),
+    KeyBin = zt_util:to_bin(Key),
+    case binary:split(KeyBin,<<".">>) of 
+      [KeyBin] -> 
+          %lager:debug("build_query_conditions first level Key: ~p, Value: ~p~n",[Key, Value]),
+          #{match => maps:from_list([{Key, Value}])};
+      [Key1, Key2] ->
+        %lager:debug("build_query_conditions second level Key: ~p, Key2: ~p, Value: ~p~n",[Key1, Key2, Value]),
+        #{
+            nested => #{
+              path => Key1,
+              query => #{
+                match => #{ 
+                  KeyBin => Value
+                }
+              }
+            }
+        }
+    end;
 
 build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
