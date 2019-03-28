@@ -30,6 +30,7 @@
 -export([
          init/1,
          create_schema/2,
+         delete_schema/1,
          persist/2,
          find_by/3,
          find_by/5,
@@ -58,7 +59,6 @@
 
 -spec init(term()) -> {ok, term()}.
 init(Options) ->
-  lager:debug("sumo elastic options: ~p~n",[Options]),
     %% ElasticSearch client uses poolboy to handle its own pool of workers
     %% so no pool is required.
     Backend = proplists:get_value(storage_backend, Options),
@@ -80,7 +80,6 @@ init(Options) ->
 -spec persist(sumo_internal:doc(), state()) ->
   sumo_store:result(sumo_internal:doc(), state()).
 persist(Doc, #{index := Index, pool_name := PoolName} = State) ->
-  lager:debug("Elastic persist: State: ~p, Doc: ~p~n",[State, Doc]),
     DocName = sumo_internal:doc_name(Doc),
     Type = atom_to_binary(DocName, utf8),
 
@@ -88,9 +87,7 @@ persist(Doc, #{index := Index, pool_name := PoolName} = State) ->
     Id =  sumo_internal:get_field(IdField, Doc),
 
     NewDoc = sleep(Doc),
-     lager:debug("Elastic persit: NewDoc: ~p~n",[NewDoc]),
     Fields = sumo_internal:doc_fields(NewDoc),
-    lager:debug("Elastic persit: Fields: ~p~n",[Fields]),
     {ok, _Json} = tirerl:insert_doc(PoolName, Index, Type, Id, Fields),
    {UpdateId, Update} =  {Id, #{doc => Fields}},
     % {UpdateId, Update} =
@@ -140,7 +137,6 @@ delete_all(DocName, #{index := Index, pool_name := PoolName} = State) ->
               state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
 find_by(DocName, Conditions, Limit, Offset, State) ->
-    lager:debug("find_by/5: DocName: ~p, Conditions: ~p, Limit: ~p, Offset: ~p, State: ~p~n",[DocName, Conditions, Limit, Offset, State]),
     find_by(DocName, Conditions,[], Limit, Offset, State).
 
 -spec find_by(sumo:schema_name(),
@@ -151,15 +147,11 @@ find_by(DocName, Conditions, Limit, Offset, State) ->
               state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
 find_by(DocName, Conditions, SortFields, Limit, Offset, #{index := Index, pool_name := PoolName} = State) ->
-lager:debug("find_by/6: DocName: ~p, Conditions: ~p, Sort: ~p, Limit: ~p, Offset: ~p, State: ~p~n",[DocName, Conditions, SortFields, Limit, Offset, State]),
     Type = atom_to_binary(DocName, utf8),
     Query = build_query(Conditions, SortFields, Limit, Offset),
    
-    lager:debug("PoolName: ~p, Index: ~p, Type: ~p, Query: : ~p~n",[PoolName, Index, Type, Query]),
     SearchResults = tirerl:search(PoolName, Index, Type, Query),
-    lager:debug("search result: ~p~n",[SearchResults]),
     {ok, #{<<"hits">> := #{<<"hits">> := Results}}} = SearchResults,
-    %    tirerl:search(PoolName, Index, Type, Query),
 
     Fun = fun(Item) -> wakeup(map_to_doc(DocName, Item)) end,
     Docs = lists:map(Fun, Results),
@@ -187,13 +179,10 @@ find_all(DocName, _OrderField, Limit, Offset, State) ->
 
 -spec create_schema(sumo:schema(), state()) -> sumo_store:result(state()).
 create_schema(Schema, #{index := Index, pool_name := PoolName} = State) ->
-    lager:debug("create schema: ~p, State: ~p~n",[Schema, State]),
     SchemaName = sumo_internal:schema_name(Schema),
     Type = atom_to_binary(SchemaName, utf8),
     Fields = sumo_internal:schema_fields(Schema),
     Mapping = build_mapping(SchemaName, Fields),
-    lager:debug("Is Index 2: ~p~n",[Index]),
-     lager:debug("put_mapping Index: ~p, Type: ~p, Mapping: ~p~n",[Index, Type, Mapping]),
     _ = case tirerl:is_index(PoolName, Index) of
         false -> tirerl:create_index(PoolName, Index);
         _ -> ok
@@ -201,6 +190,13 @@ create_schema(Schema, #{index := Index, pool_name := PoolName} = State) ->
     
 
     {ok, _} = tirerl:put_mapping(PoolName, Index, Type, Mapping),
+
+    {ok, State}.
+
+-spec delete_schema(state()) -> sumo_store:result(state()).
+delete_schema(#{index := Index, pool_name := PoolName} = State) ->
+   
+   tirerl:delete_index(PoolName, Index),
 
     {ok, State}.
 
@@ -269,6 +265,7 @@ build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
 
 
+
 build_query_conditions({Key, '>', Value}) ->
   #{
     range => #{
@@ -305,8 +302,25 @@ build_query_conditions({Key, '=<', Value}) ->
     }
   };
 
+% CurLocation Distance Key
+
 build_query_conditions({_Key, 'in', _Values} = Expr) ->
-  throw({unimplemented_expression, Expr});    
+  throw({unimplemented_expression, Expr});
+
+build_query_conditions({Key, 'distance', {CurLocation, DistanceVal}}) ->
+  build_query_conditions({Key, 'distance', {CurLocation, DistanceVal, <<"km">>}});
+
+build_query_conditions({Key, 'distance', {CurLocation, DistanceVal, DistanceUnit}}) ->
+CurLocationBin = zt_util:to_bin(CurLocation),
+DistanceValBin = zt_util:to_bin(DistanceVal),
+DistanceUnitBin = zt_util:to_bin(DistanceUnit),
+Distance = <<DistanceValBin/binary,DistanceUnitBin/binary>>,
+#{
+    geo_distance => #{
+      distance => Distance,
+      Key => CurLocationBin
+    }
+};    
 
 build_query_conditions(Expr) ->
     throw({unimplemented_expression, Expr}).
@@ -330,11 +344,10 @@ normalize_type(datetime) -> date;
 normalize_type(custom) -> text;
 normalize_type(string) -> text;
 normalize_type(binary) -> text;
+normalize_type(object_list) -> nested;
 %normalize_type(_Type) -> text.
-% boolean, float, integer, nested, object
-normalize_type(Type) -> 
-lager:debug("normalize_type: ~p~n",[Type]),
-Type.
+% boolean, float, integer, nested, object, geo_point
+normalize_type(Type) -> Type.
 
 %% @private
 count(PoolName, Index, Type, Query, Params) ->
@@ -389,14 +402,18 @@ wakeup(Doc) ->
 
 %% @private
 wakeup_fun({datetime, _, FieldValue}) ->
-    iso8601:parse(FieldValue);
+    zt_util:now_to_utc_binary(FieldValue);
+
 wakeup_fun({date, _, FieldValue}) ->
     {Date, _} = iso8601:parse(FieldValue),
     Date;
+
 wakeup_fun({_, _, null}) ->
     undefined;
+
 wakeup_fun({custom, _, FieldValue}) ->
     binary_to_term(base64:decode(FieldValue));
+
 wakeup_fun({_, _, FieldValue}) ->
     FieldValue.
 
