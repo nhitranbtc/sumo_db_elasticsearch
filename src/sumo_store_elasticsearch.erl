@@ -111,12 +111,10 @@ persist(Doc, #{index := Index, pool_name := PoolName} = State) ->
 delete_by(DocName,
           Conditions,
           #{index := Index, pool_name := PoolName} = State) ->
-    Query = build_query(Conditions),
+    Query = build_delete_query(Conditions),
     Type = atom_to_binary(DocName, utf8),
-
     Count = count(PoolName, Index, Type, Query, []),
     ok = delete_by_query(PoolName, Index, Type, Query, []),
-
     {ok, Count, State}.
 
 -spec delete_all(sumo:schema_name(), state()) ->
@@ -217,8 +215,8 @@ map_to_doc(DocName, Item) ->
     Doc = lists:foldl(Fun, sumo_internal:new_doc(DocName), Keys),
     sumo_internal:set_field(IdField, maps:get(<<"_id">>, Item), Doc).
 
-build_query(Conditions) ->
-    build_query(Conditions, [], 0, 0).
+% build_query(Conditions) ->
+%     build_query(Conditions, [], 0, 0).
 
 % build_query(Conditions, Limit, Offset) ->
 %   build_query(Conditions,[], Limit, Offset).
@@ -235,6 +233,18 @@ build_query(Conditions, SortConditions, Limit, Offset) ->
                     size => Limit}
     end.
 
+build_delete_query(Conditions) ->
+    build_delete_query(Conditions, 0, 0).
+
+
+build_delete_query(Conditions, Limit, Offset) ->
+    Query = build_query_conditions(Conditions),
+   
+    case Limit of
+        0 -> Query;
+        _ -> Query#{from => Offset,
+                    size => Limit}
+    end.
 
 build_sort_conditions([]) ->
     [];
@@ -267,7 +277,7 @@ build_query_conditions({Key, Value}) ->
       [KeyBin] -> 
           %lager:debug("build_query_conditions first level Key: ~p, Value: ~p~n",[Key, Value]),
           #{match => maps:from_list([{Key, Value}])};
-      [Key1, Key2] ->
+      [Key1, _Key2] ->
         %lager:debug("build_query_conditions second level Key: ~p, Key2: ~p, Value: ~p~n",[Key1, Key2, Value]),
         #{
             nested => #{
@@ -354,7 +364,7 @@ build_mapping(_MappingType, Fields) ->
                 maps:put(Name, #{type => FieldType}, Acc)
         end,
     Properties = lists:foldl(Fun, #{}, Fields),
-    io:format("Properties: ~p~n",[Properties]),
+    %io:format("Properties: ~p~n",[Properties]),
     %maps:from_list([#{'mappings' => #{'_doc' => #{properties => Properties}}}, #{'settings' => #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
     maps:from_list([{'mappings' , #{'_doc' => #{properties => Properties}}},{'settings' , #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
 % https://www.elastic.co/guide/en/elasticsearch/reference/6.4/sql-data-types.html
