@@ -146,8 +146,8 @@ find_by(DocName, Conditions, Limit, Offset, State) ->
   sumo_store:result([sumo_internal:doc()], state()).
 find_by(DocName, Conditions, SortFields, Limit, Offset, #{index := Index, pool_name := PoolName} = State) ->
     Type = atom_to_binary(DocName, utf8),
-    Query = build_query(Conditions, SortFields, Limit, Offset),
-   
+    Query = build_query(DocName, Conditions, SortFields, Limit, Offset),
+    lager:debug("find_by Type: ~p, query: ~p~n",[Type, Query]),
     SearchResults = tirerl:search(PoolName, Index, Type, Query),
     {ok, #{<<"hits">> := #{<<"hits">> := Results}}} = SearchResults,
 
@@ -221,9 +221,9 @@ map_to_doc(DocName, Item) ->
 % build_query(Conditions, Limit, Offset) ->
 %   build_query(Conditions,[], Limit, Offset).
 
-build_query(Conditions, SortConditions, Limit, Offset) ->
+build_query(DocName, Conditions, SortConditions, Limit, Offset) ->
     FilterQuery = build_query_conditions(Conditions),
-    SortQuery = build_sort_conditions(SortConditions),
+    SortQuery = build_sort_conditions(DocName, SortConditions),
     Query = FilterQuery#{
       sort => SortQuery
     },
@@ -246,16 +246,30 @@ build_delete_query(Conditions, Limit, Offset) ->
                     size => Limit}
     end.
 
-build_sort_conditions([]) ->
+build_sort_conditions(_, []) ->
     [];
 
-build_sort_conditions(Conditions) when is_list(Conditions) ->
-    lists:map(fun build_sort_conditions/1, Conditions);
+build_sort_conditions(DocName, Conditions) when is_list(Conditions) ->
+    {SortConditions, _} = 
+    lists:mapfoldl(fun build_sort_conditions/2, DocName, Conditions),
+      SortConditions;
 
-build_sort_conditions({SortField, SortValue}) ->
-  #{
-      SortField => SortValue
-  }.      
+build_sort_conditions({SortFieldRaw, SortValue}, DocName) ->
+  SortFieldAtom = zt_util:to_atom(SortFieldRaw),
+  SortTerm = 
+  case sumo_internal:field_type(test_doc, SortFieldAtom) of 
+    string -> 
+      SortFieldBin = zt_util:to_bin(SortFieldRaw),
+      SortField = zt_util:to_atom(<<SortFieldBin/binary,".keyword">>),
+      #{
+          SortField => SortValue
+      };
+    _ ->
+      #{
+          SortFieldRaw => SortValue
+      }
+end,
+{SortTerm, DocName}.
 
 
 build_query_conditions([]) ->
@@ -263,7 +277,6 @@ build_query_conditions([]) ->
 
 build_query_conditions(Conditions) when is_list(Conditions) ->
     QueryConditions = lists:map(fun build_query_conditions/1, Conditions),
-      lager:debug("QueryConditions: ~p~n",[QueryConditions]),
     #{query => #{bool => #{must => QueryConditions}}};
 
 build_query_conditions({Key, Value}) when is_list(Value) ->
@@ -360,8 +373,26 @@ build_mapping(_MappingType, Fields) ->
         fun
             (Field, Acc) ->
                 Name = sumo_internal:field_name(Field),
-                FieldType = normalize_type(sumo_internal:field_type(Field)),
-                maps:put(Name, #{type => FieldType}, Acc)
+                FullFieldType = 
+                case sumo_internal:field_type(Field) of
+                  string = TempType -> 
+                    FieldType = normalize_type(TempType),
+                    #{
+                        type => FieldType,
+                        fields => #{
+                            keyword => #{ 
+                              type => keyword
+                            }
+                        }
+                    };
+                  TempType ->
+                    FieldType = normalize_type(TempType),
+                    #{
+                        type => FieldType
+                    }
+                end, 
+
+                maps:put(Name, FullFieldType, Acc)
         end,
     Properties = lists:foldl(Fun, #{}, Fields),
     %io:format("Properties: ~p~n",[Properties]),
@@ -373,10 +404,10 @@ normalize_type(date) -> date;
 normalize_type(datetime) -> date;
 normalize_type(custom) -> text;
 normalize_type(string) -> text;
-normalize_type(binary) -> text;
+normalize_type(binary) -> keyword;
 normalize_type(object_list) -> nested;
 %normalize_type(_Type) -> text.
-% boolean, float, integer, nested, object, geo_point
+% keyword, boolean, float, integer, nested, object, geo_point
 normalize_type(Type) -> Type.
 
 %% @private
