@@ -88,7 +88,8 @@ persist(Doc, #{index := Index, pool_name := PoolName} = State) ->
 
     NewDoc = sleep(Doc),
     Fields = sumo_internal:doc_fields(NewDoc),
-    {ok, _Json} = tirerl:insert_doc(PoolName, Index, Type, Id, Fields),
+    Params = [{refresh, true}],
+    {ok, _Json} = tirerl:insert_doc(PoolName, Index, Type, Id, Fields, Params),
    {UpdateId, Update} =  {Id, #{doc => Fields}},
     % {UpdateId, Update} =
     %     case Id of
@@ -257,7 +258,7 @@ build_sort_conditions(DocName, Conditions) when is_list(Conditions) ->
 build_sort_conditions({SortFieldRaw, SortValue}, DocName) ->
   SortFieldAtom = zt_util:to_atom(SortFieldRaw),
   SortTerm = 
-  case sumo_internal:field_type(test_doc, SortFieldAtom) of 
+  case sumo_internal:field_type(DocName, SortFieldAtom) of 
     string -> 
       SortFieldBin = zt_util:to_bin(SortFieldRaw),
       SortField = zt_util:to_atom(<<SortFieldBin/binary,".keyword">>),
@@ -304,6 +305,14 @@ build_query_conditions({Key, Value}) ->
         }
     end;
 
+build_query_conditions({Key, 'in', Values} = _Expr) ->
+
+  #{
+      terms => #{ 
+                    Key => Values
+                }
+  };
+
 build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
 
@@ -347,8 +356,7 @@ build_query_conditions({Key, '=<', Value}) ->
 
 % CurLocation Distance Key
 
-build_query_conditions({_Key, 'in', _Values} = Expr) ->
-  throw({unimplemented_expression, Expr});
+
 
 build_query_conditions({Key, 'distance', {CurLocation, DistanceVal}}) ->
   build_query_conditions({Key, 'distance', {CurLocation, DistanceVal, <<"km">>}});
