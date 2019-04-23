@@ -148,14 +148,19 @@ find_by(DocName, Conditions, Limit, Offset, State) ->
 find_by(DocName, Conditions, SortFields, Limit, Offset, #{index := Index, pool_name := PoolName} = State) ->
     Type = atom_to_binary(DocName, utf8),
     Query = build_query(DocName, Conditions, SortFields, Limit, Offset),
-    lager:debug("find_by Type: ~p, query: ~p~n",[Type, Query]),
+    lager:debug("find_by Limit: ~p, Type:  ~p, Index: ~p, query: ~p~n",[Limit, Type, Index, Query]),
     SearchResults = tirerl:search(PoolName, Index, Type, Query),
-    {ok, #{<<"hits">> := #{<<"hits">> := Results}}} = SearchResults,
+    lager:debug("Search results: ~p~n",[SearchResults]),
+    case SearchResults of 
+      {ok, #{<<"aggregations">> := AggResult}} -> {ok, {agg, AggResult}, State};
+      {ok, #{<<"hits">> := #{<<"hits">> := Results}}} -> 
+        Fun = fun(Item) -> wakeup(map_to_doc(DocName, Item)) end,
+        Docs = lists:map(Fun, Results),
+        {ok, Docs, State};
+      _ -> {ok, [], State}
+    end.
 
-    Fun = fun(Item) -> wakeup(map_to_doc(DocName, Item)) end,
-    Docs = lists:map(Fun, Results),
-
-    {ok, Docs, State}.
+          
 
 -spec find_by(sumo:schema_name(), sumo:conditions(), state()) ->
   sumo_store:result([sumo_internal:doc()], state()).
@@ -181,6 +186,7 @@ create_schema(Schema, #{index := Index, pool_name := PoolName} = State) ->
     SchemaName = sumo_internal:schema_name(Schema),
     Type = atom_to_binary(SchemaName, utf8),
     Fields = sumo_internal:schema_fields(Schema),
+    io:format("Schema: ~p~n",[Schema]),
     Mapping = build_mapping(SchemaName, Fields),
     _ = case tirerl:is_index(PoolName, Index) of
         false -> tirerl:create_index(PoolName, Index);
@@ -273,16 +279,50 @@ end,
 {SortTerm, DocName}.
 
 
+build_agg_conditions(Conditions) when is_list(Conditions) ->
+   Aggs = lists:filtermap(fun(Cond)-> 
+      case build_agg_conditions(Cond) of
+        ignore -> false;
+        FormatedCond -> {true, FormatedCond}
+      end
+    end, Conditions),
+   case Aggs of 
+      [AggMap] -> AggMap;
+      _ -> ignore
+    end;
+
+build_agg_conditions({agg, Body}) ->
+  Body;
+
+build_agg_conditions(_) ->
+  ignore.
+
 build_query_conditions([]) ->
     #{};
 
 build_query_conditions(Conditions) when is_list(Conditions) ->
-    QueryConditions = lists:map(fun build_query_conditions/1, Conditions),
-    #{query => #{bool => #{must => QueryConditions}}};
+    QueryConditions = lists:filtermap(fun(Cond)-> 
+      case build_query_conditions(Cond) of
+        ignore -> false;
+        FormatedCond -> {true, FormatedCond}
+      end
+    end, Conditions),
+    QueryMap = #{
+        query => #{bool => #{must => QueryConditions}}
+    },
+    case build_agg_conditions(Conditions) of
+      ignore -> QueryMap;
+      AggMap -> maps:put(aggregations, AggMap, QueryMap)
+    end;
 
 build_query_conditions({Key, Value}) when is_list(Value) ->
     #{match => maps:from_list([{Key, list_to_binary(Value)}])};
 
+%TODO: Currently only handle with nested field => handle with object field
+
+
+build_query_conditions({agg, _Body}) ->
+  ignore;
 
 build_query_conditions({Key, Value}) ->
   %lager:debug("build_query_conditions Key: ~p, Value: ~p~n",[Key, Value]),
@@ -393,6 +433,13 @@ build_mapping(_MappingType, Fields) ->
                             }
                         }
                     };
+                  % object -> 
+                  %   io:format("object field detail ~p~n",[Field]),
+                  %   SubFields = build_mapping(_MappingType,[]),
+                  %   #{
+                  %       type => object,
+                  %       fields => SubFields
+                  %   };
                   TempType ->
                     FieldType = normalize_type(TempType),
                     #{
@@ -403,7 +450,7 @@ build_mapping(_MappingType, Fields) ->
                 maps:put(Name, FullFieldType, Acc)
         end,
     Properties = lists:foldl(Fun, #{}, Fields),
-    %io:format("Properties: ~p~n",[Properties]),
+    io:format("Properties: ~p~n",[Properties]),
     %maps:from_list([#{'mappings' => #{'_doc' => #{properties => Properties}}}, #{'settings' => #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
     maps:from_list([{'mappings' , #{'_doc' => #{properties => Properties}}},{'settings' , #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
 % https://www.elastic.co/guide/en/elasticsearch/reference/6.4/sql-data-types.html
@@ -414,6 +461,7 @@ normalize_type(custom) -> text;
 normalize_type(string) -> text;
 normalize_type(binary) -> keyword;
 normalize_type(object_list) -> nested;
+
 %normalize_type(_Type) -> text.
 % keyword, boolean, float, integer, nested, object, geo_point
 normalize_type(Type) -> Type.
