@@ -353,6 +353,22 @@ build_query_conditions({Key, 'in', Values} = _Expr) ->
                 }
   };
 
+build_query_conditions({Key, 'not in', Values} = _Expr) ->
+
+  #{
+      bool => #{
+        must_not => [
+          #{
+              terms => #{ 
+                    Key => Values
+                }
+          }
+        ]
+      } 
+  
+  };
+
+
 build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
 
