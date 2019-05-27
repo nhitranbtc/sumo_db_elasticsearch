@@ -346,27 +346,63 @@ build_query_conditions({Key, Value}) ->
     end;
 
 build_query_conditions({Key, 'in', Values} = _Expr) ->
-
-  #{
-      terms => #{ 
-                    Key => Values
-                }
-  };
-
-build_query_conditions({Key, 'not in', Values} = _Expr) ->
-
-  #{
-      bool => #{
-        must_not => [
+  KeyBin = zt_util:to_bin(Key),
+  case binary:split(KeyBin,<<".">>) of 
+      [KeyBin] -> 
           #{
               terms => #{ 
                     Key => Values
                 }
-          }
-        ]
-      } 
+          };
+      [Key1, _Key2] ->
+        #{
+            nested => #{
+              path => Key1,
+              query => #{
+                    terms => #{
+                          KeyBin => Values
+                      }
+                 }
+              }
+            }
+  end;
+
+build_query_conditions({Key, 'not in', Values} = _Expr) ->
   
-  };
+  KeyBin = zt_util:to_bin(Key),
+  case binary:split(KeyBin,<<".">>) of 
+      [KeyBin] -> 
+          #{
+              bool => #{
+                must_not => [
+                  #{
+                      terms => #{ 
+                            Key => Values
+                        }
+                  }
+                ]
+              } 
+          };
+      [Key1, _Key2] ->
+        #{
+            nested => #{
+              path => Key1,
+              query => #{
+                        bool => #{
+                          must_not => [
+                            #{
+                                terms => #{
+                                      KeyBin => Values
+                                  }
+                            }
+                          ]
+                        } 
+                  }
+              }
+          }
+  end;
+
+  
 
 
 build_query_conditions({Key, Op , Value}) when is_list(Value) ->
