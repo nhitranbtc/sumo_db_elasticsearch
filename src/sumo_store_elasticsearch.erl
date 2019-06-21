@@ -409,6 +409,16 @@ build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
 
 
+build_query_conditions({Key, 'like', Value}) ->
+  #{
+    wildcard => #{
+      Key => #{
+        value => Value,
+        boost => 1.0,
+        rewrite => <<"constant_score">>
+      }
+    }
+  };
 
 build_query_conditions({Key, '>', Value}) ->
   #{
