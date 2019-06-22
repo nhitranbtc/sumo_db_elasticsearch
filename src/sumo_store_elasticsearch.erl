@@ -46,6 +46,7 @@
   wakeup/1
   ]).
 
+-define(NESTED_SEP_Q, <<"#">>).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Types.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -327,7 +328,7 @@ build_query_conditions({agg, _Body}) ->
 build_query_conditions({Key, Value}) ->
   %lager:debug("build_query_conditions Key: ~p, Value: ~p~n",[Key, Value]),
     KeyBin = zt_util:to_bin(Key),
-    case binary:split(KeyBin,<<".">>) of 
+    case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           %lager:debug("build_query_conditions first level Key: ~p, Value: ~p~n",[Key, Value]),
           #{match => maps:from_list([{Key, Value}])};
@@ -347,7 +348,7 @@ build_query_conditions({Key, Value}) ->
 
 build_query_conditions({Key, 'in', Values} = _Expr) ->
   KeyBin = zt_util:to_bin(Key),
-  case binary:split(KeyBin,<<".">>) of 
+  case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           #{
               terms => #{ 
@@ -370,7 +371,7 @@ build_query_conditions({Key, 'in', Values} = _Expr) ->
 build_query_conditions({Key, 'not in', Values} = _Expr) ->
   
   KeyBin = zt_util:to_bin(Key),
-  case binary:split(KeyBin,<<".">>) of 
+  case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           #{
               bool => #{
