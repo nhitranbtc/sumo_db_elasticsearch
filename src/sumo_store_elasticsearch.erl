@@ -332,14 +332,15 @@ build_query_conditions({Key, Value}) ->
       [KeyBin] -> 
           %lager:debug("build_query_conditions first level Key: ~p, Value: ~p~n",[Key, Value]),
           #{match => maps:from_list([{Key, Value}])};
-      [Key1, _Key2] ->
+      [Key1 | _] ->
         %lager:debug("build_query_conditions second level Key: ~p, Key2: ~p, Value: ~p~n",[Key1, Key2, Value]),
+        NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
               query => #{
                 match => #{ 
-                  KeyBin => Value
+                  NestedKey => Value
                 }
               }
             }
@@ -355,13 +356,14 @@ build_query_conditions({Key, 'in', Values} = _Expr) ->
                     Key => Values
                 }
           };
-      [Key1, _Key2] ->
+      [Key1 | _] ->
+           NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
               query => #{
                     terms => #{
-                          KeyBin => Values
+                          NestedKey => Values
                       }
                  }
               }
@@ -384,7 +386,8 @@ build_query_conditions({Key, 'not in', Values} = _Expr) ->
                 ]
               } 
           };
-      [Key1, _Key2] ->
+      [Key1 | _] ->
+         NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
@@ -393,7 +396,7 @@ build_query_conditions({Key, 'not in', Values} = _Expr) ->
                           must_not => [
                             #{
                                 terms => #{
-                                      KeyBin => Values
+                                      NestedKey => Values
                                   }
                             }
                           ]
