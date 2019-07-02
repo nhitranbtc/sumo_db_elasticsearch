@@ -424,6 +424,28 @@ build_query_conditions({Key, 'like', Value}) ->
     }
   };
 
+
+
+build_query_conditions({{field,Field1}, Op, {field, Field2}}) ->
+  Field1Bin = zt_util:to_bin(Field1),
+  Field2Bin = zt_util:to_bin(Field2),
+  OpBin = zt_util:to_bin(Op),
+  
+  #{
+    script => #{
+      script => #{
+        source => <<"doc['",Field1Bin/binary,"'].value ",OpBin/binary," doc['",Field2Bin/binary,"'].value">>,
+        lang => <<"painless">>
+      }
+    }
+  };
+
+build_query_conditions({{field,Field1}, Op, Field2}) ->
+  build_query_conditions({{field,Field1}, Op, {field, Field2}});
+
+build_query_conditions({Field1, Op, {field, Field2}}) ->
+  build_query_conditions({{field,Field1}, Op, {field, Field2}});
+  
 build_query_conditions({Key, '>', Value}) ->
   #{
     range => #{
