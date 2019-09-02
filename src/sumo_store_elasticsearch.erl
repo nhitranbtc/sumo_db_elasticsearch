@@ -73,6 +73,7 @@ init(Options) ->
       Idx when is_binary(Idx) -> Idx;
        _ -> throw(invalid_index)
      end,
+lager:debug("store init Backend: ~p, Index: ~p~n",[Backend, Index]),
     PoolName = sumo_backend_elasticsearch:get_pool_name(Backend),
 
     {ok, #{index => Index, pool_name => PoolName}}.
