@@ -46,6 +46,7 @@
   wakeup/1
   ]).
 
+-define(NESTED_SEP_Q, <<"#">>).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Types.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -328,18 +329,19 @@ build_query_conditions({agg, _Body}) ->
 build_query_conditions({Key, Value}) ->
   %lager:debug("build_query_conditions Key: ~p, Value: ~p~n",[Key, Value]),
     KeyBin = zt_util:to_bin(Key),
-    case binary:split(KeyBin,<<".">>) of 
+    case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           %lager:debug("build_query_conditions first level Key: ~p, Value: ~p~n",[Key, Value]),
           #{match => maps:from_list([{Key, Value}])};
-      [Key1, _Key2] ->
+      [Key1 | _] ->
         %lager:debug("build_query_conditions second level Key: ~p, Key2: ~p, Value: ~p~n",[Key1, Key2, Value]),
+        NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
               query => #{
                 match => #{ 
-                  KeyBin => Value
+                  NestedKey => Value
                 }
               }
             }
@@ -348,20 +350,21 @@ build_query_conditions({Key, Value}) ->
 
 build_query_conditions({Key, 'in', Values} = _Expr) ->
   KeyBin = zt_util:to_bin(Key),
-  case binary:split(KeyBin,<<".">>) of 
+  case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           #{
               terms => #{ 
                     Key => Values
                 }
           };
-      [Key1, _Key2] ->
+      [Key1 | _] ->
+           NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
               query => #{
                     terms => #{
-                          KeyBin => Values
+                          NestedKey => Values
                       }
                  }
               }
@@ -371,7 +374,7 @@ build_query_conditions({Key, 'in', Values} = _Expr) ->
 build_query_conditions({Key, 'not in', Values} = _Expr) ->
   
   KeyBin = zt_util:to_bin(Key),
-  case binary:split(KeyBin,<<".">>) of 
+  case binary:split(KeyBin, ?NESTED_SEP_Q) of 
       [KeyBin] -> 
           #{
               bool => #{
@@ -384,7 +387,8 @@ build_query_conditions({Key, 'not in', Values} = _Expr) ->
                 ]
               } 
           };
-      [Key1, _Key2] ->
+      [Key1 | _] ->
+         NestedKey = binary:replace(KeyBin, ?NESTED_SEP_Q , <<".">>,[global]),
         #{
             nested => #{
               path => Key1,
@@ -393,7 +397,7 @@ build_query_conditions({Key, 'not in', Values} = _Expr) ->
                           must_not => [
                             #{
                                 terms => #{
-                                      KeyBin => Values
+                                      NestedKey => Values
                                   }
                             }
                           ]
@@ -410,7 +414,39 @@ build_query_conditions({Key, Op , Value}) when is_list(Value) ->
   build_query_conditions({Key, Op , list_to_binary(Value)});
 
 
+build_query_conditions({Key, 'like', Value}) ->
+  #{
+    wildcard => #{
+      Key => #{
+        value => Value,
+        boost => 1.0,
+        rewrite => <<"constant_score">>
+      }
+    }
+  };
 
+
+
+build_query_conditions({{field,Field1}, Op, {field, Field2}}) ->
+  Field1Bin = zt_util:to_bin(Field1),
+  Field2Bin = zt_util:to_bin(Field2),
+  OpBin = zt_util:to_bin(Op),
+  
+  #{
+    script => #{
+      script => #{
+        source => <<"doc['",Field1Bin/binary,"'].value ",OpBin/binary," doc['",Field2Bin/binary,"'].value">>,
+        lang => <<"painless">>
+      }
+    }
+  };
+
+build_query_conditions({{field,Field1}, Op, Field2}) ->
+  build_query_conditions({{field,Field1}, Op, {field, Field2}});
+
+build_query_conditions({Field1, Op, {field, Field2}}) ->
+  build_query_conditions({{field,Field1}, Op, {field, Field2}});
+  
 build_query_conditions({Key, '>', Value}) ->
   #{
     range => #{
