@@ -236,7 +236,8 @@ build_query(DocName, Conditions, SortConditions, Limit, Offset) ->
       sort => SortQuery
     },
     case Limit of
-        0 -> Query;
+        0 -> Query#{from => Offset, 
+		size => 9000};
         _ -> Query#{from => Offset,
                     size => Limit}
     end.
