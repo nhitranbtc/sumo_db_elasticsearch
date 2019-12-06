@@ -540,9 +540,10 @@ build_mapping(_MappingType, Fields) ->
                 maps:put(Name, FullFieldType, Acc)
         end,
     Properties = lists:foldl(Fun, #{}, Fields),
-    io:format("Properties: ~p~n",[Properties]),
+    #{'properties' => Properties}.
+    %io:format("Properties: ~p~n",[Properties]),
     %maps:from_list([#{'mappings' => #{'_doc' => #{properties => Properties}}}, #{'settings' => #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
-    maps:from_list([{'mappings' , #{'_doc' => #{properties => Properties}}},{'settings' , #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
+    %maps:from_list([{'mappings' , #{'_doc' => #{properties => Properties}}},{'settings' , #{index =>  #{number_of_shards =>  1, number_of_replicas => 1}}}]).
 % https://www.elastic.co/guide/en/elasticsearch/reference/6.4/sql-data-types.html
 
 normalize_type(date) -> date;
