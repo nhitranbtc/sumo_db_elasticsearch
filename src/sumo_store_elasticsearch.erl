@@ -144,11 +144,11 @@ find_by(DocName, Conditions, Limit, Offset, State) ->
 	find_by(DocName, Conditions,[], Limit, Offset, State).
 
 -spec find_count_by(sumo:schema_name(),
-							sumo:conditions(),
-							sumo:sort(),
-							non_neg_integer(),
-							non_neg_integer(),
-							state()) ->
+										sumo:conditions(),
+										sumo:sort(),
+										non_neg_integer(),
+										non_neg_integer(),
+										state()) ->
 	sumo_store:result([sumo_internal:doc()], state()).
 
 find_count_by(DocName, Conditions, SortFields, Limit, Offset, #{index := Index, pool_name := PoolName} = State) ->
@@ -525,37 +525,36 @@ build_query_conditions({Key, 'distance', {CurLocation, DistanceVal, DistanceUnit
 build_query_conditions(Expr) ->
 	throw({unimplemented_expression, Expr}).
 
-build_mapping(_MappingType, Fields) ->
+build_mapping(SchemaName, Fields) ->
 	Fun =
 	fun
 		(Field, Acc) ->
 			Name = sumo_internal:field_name(Field),
-			FullFieldType =
-			case sumo_internal:field_type(Field) of
-				string = TempType ->
-					FieldType = normalize_type(TempType),
-					#{
-																			 type => FieldType,
-																			 fields => #{
-																				 keyword => #{
-																					 type => keyword
-																					}
-																				}
-																			};
-				% object ->
-				%   io:format("object field detail ~p~n",[Field]),
-				%   SubFields = build_mapping(_MappingType,[]),
-				%   #{
-				%       type => object,
-				%       fields => SubFields
-				%   };
-				TempType ->
-					FieldType = normalize_type(TempType),
-					#{
-																			 type => FieldType
-																			}
-			end,
+			TempType = sumo_internal:field_type(Field),
 
+			FullFieldType =
+			if TempType == string ->
+					 FieldType = normalize_type(TempType),
+					 #{type => FieldType,
+						 fields => #{
+							 keyword => #{
+								 type => keyword
+								}
+							}
+						};
+				 TempType == object ->
+					 Attrs = sumo_internal:field_attrs(Field),
+					 case Attrs of
+						 [] -> #{type => TempType};
+						 [Db|_] when is_map(Db) ->
+							 build_mapping(SchemaName, Attrs);
+						 _ ->
+							 #{type => TempType}
+					 end;
+				 true ->
+					 FieldType = normalize_type(TempType),
+					 #{type => FieldType}
+			end,
 			maps:put(Name, FullFieldType, Acc)
 	end,
 	Properties = lists:foldl(Fun, #{}, Fields),
@@ -630,7 +629,7 @@ wakeup(Doc) ->
 %% @private
 wakeup_fun({datetime, _, FieldValue}) ->
 	FieldValue;
-	%zt_util:now_to_utc_binary(FieldValue);
+%zt_util:now_to_utc_binary(FieldValue);
 
 wakeup_fun({date, _, FieldValue}) ->
 	{Date, _} = iso8601:parse(FieldValue),
