@@ -531,7 +531,6 @@ build_mapping(SchemaName, Fields) ->
 		(Field, Acc) ->
 			Name = sumo_internal:field_name(Field),
 			TempType = sumo_internal:field_type(Field),
-
 			FullFieldType =
 			if TempType == string ->
 					 FieldType = normalize_type(TempType),
@@ -545,9 +544,16 @@ build_mapping(SchemaName, Fields) ->
 				 TempType == object ->
 					 Attrs = sumo_internal:field_attrs(Field),
 					 case Attrs of
-						 [] -> #{type => TempType};
+						 [] -> #{type => TempType, enabled => false};
 						 [Db|_] when is_map(Db) ->
 							 build_mapping(SchemaName, Attrs);
+						 _ ->
+							 #{type => TempType}
+					 end;
+				 TempType == object_list ->
+					 Attrs = sumo_internal:field_attrs(Field),
+					 case Attrs of
+						 [] -> #{type => nested, enabled => false};
 						 _ ->
 							 #{type => TempType}
 					 end;
