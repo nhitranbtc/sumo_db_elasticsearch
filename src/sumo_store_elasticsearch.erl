@@ -551,11 +551,15 @@ build_mapping(SchemaName, Fields) ->
 							 #{type => TempType}
 					 end;
 				 TempType == object_list ->
+					 FieldType = normalize_type(TempType),
 					 Attrs = sumo_internal:field_attrs(Field),
 					 case Attrs of
-						 [] -> #{type => nested, enabled => false};
+						 [] -> #{type => FieldType, enabled => false};
+						 [Db|_] when is_map(Db) ->
+							 maps:merge(#{type => FieldType}, build_mapping(SchemaName, Attrs));
 						 _ ->
-							 #{type => TempType}
+							 #{type => FieldType
+								 ,enabled => false}
 					 end;
 				 true ->
 					 FieldType = normalize_type(TempType),
@@ -661,3 +665,4 @@ wakeup_fun({_, _, FieldValue}) ->
 %     binary_to_term(base64:decode(FieldValue));
 % wakeup_fun(_, _, FieldValue, _) ->
 %     FieldValue.
+
